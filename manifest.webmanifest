@@ -1,12 +1,12 @@
 {
   "name": "Daffa — Financial DASHBOARD",
-  "short_name": "Financial OS",
+  "short_name": "Financial Dashboard",
   "description": "Personal financial operating system — LPDP Scholar at UCL London",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#0A1B2A",
+  "background_color": "#75beff",
   "theme_color": "#0A1B2A",
   "icons": [
     { "src": "./icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
