@@ -76,3 +76,17 @@ Menu **FlowAI Config** berisi 7 langkah mengambil kunci gratis dari openrouter.a
 - **Scan/upload struk** (kamera HP didukung, gambar dikompres; ikut tersimpan ke Drive saat terhubung)
 - **Laporan Keuangan** per bulan: ringkasan, per kategori, saldo akun, daftar transaksi & transfer → tombol **Download PDF / Print**
 - Kategori & akun bisa ditambah sendiri; tema baru putih + biru muda
+
+---
+
+## v4 — Claude AI, Google Sheets database, Explorer Hemat
+
+Upload & timpa: `index.html` + `sw.js` (cache v4).
+
+**Claude AI** (menu "Claude AI"): kunci dari console.anthropic.com → Billing (min $5; Haiku ±$0.003/pertanyaan) → API Keys → Create → paste → Simpan. Model: Haiku (murah) atau Sonnet (lebih dalam).
+
+**Google Sheets = database & sinkron**: app membuat spreadsheet **FinancialOS-Daffa** (sheet "Transaksi" bisa dibuka di app Google Sheets HP; sheet "_data" untuk sinkron). Setup Client ID sama seperti sebelumnya, TAPI kini Enable **dua** API: Google Drive API **dan** Google Sheets API. Struk tetap masuk folder Drive FinancialOS-Daffa.
+
+**Explorer Hemat**: peta + pencarian "cari apa / area", tombol pintar Belanja Murah (Lidl/Aldi/halal butcher/charity shop/Marketplace/Vinted…), Transport Termurah (TfL/Citymapper/Maps transit/bus-only/Trainline/Megabus + trik Hopper/cap/Railcard), Wisata gratis (museum, Sky Garden, walking tour, TodayTix) & diskon pelajar (UNiDAYS/TOTUM/Too Good To Go), serta **Tips untukmu** yang dianalisis dari transaksimu + tombol analisis mendalam Claude.
+
+Set "Area rumah" di Pengaturan agar pencarian "terdekat" akurat.
