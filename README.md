@@ -90,3 +90,16 @@ Upload & timpa: `index.html` + `sw.js` (cache v4).
 **Explorer Hemat**: peta + pencarian "cari apa / area", tombol pintar Belanja Murah (Lidl/Aldi/halal butcher/charity shop/Marketplace/Vinted…), Transport Termurah (TfL/Citymapper/Maps transit/bus-only/Trainline/Megabus + trik Hopper/cap/Railcard), Wisata gratis (museum, Sky Garden, walking tour, TodayTix) & diskon pelajar (UNiDAYS/TOTUM/Too Good To Go), serta **Tips untukmu** yang dianalisis dari transaksimu + tombol analisis mendalam Claude.
 
 Set "Area rumah" di Pengaturan agar pencarian "terdekat" akurat.
+
+---
+
+## v5 — Perbaikan hilangnya riwayat + sinkron aman (WAJIB update)
+
+Upload & timpa: `index.html` + `sw.js` (cache v6).
+
+Perbaikan inti:
+- **Riwayat tidak bisa hilang lagi.** Sinkron kini MENGGABUNGKAN (union) transaksi lokal & cloud per-ID — cloud kosong/lama tidak akan menimpa data lokal.
+- **Cadangan lokal otomatis** setiap kali menyimpan; jika app terbuka dengan riwayat kosong, cadangan dipulihkan otomatis. Ada tombol **↩ Pulihkan Riwayat** di Pengaturan.
+- Transaksi yang dihapus dicatat (tombstone) sehingga tidak "hidup lagi" saat sinkron.
+- Auto-connect senyap saat app dibuka; token diperbarui otomatis; jika gagal senyap, cukup 1 klik "Hubungkan Google".
+- Sinkron otomatis saat app kembali aktif (pindah HP↔laptop).

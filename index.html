@@ -495,6 +495,7 @@
         <div style="display:flex;gap:9px;flex-wrap:wrap">
           <button class="btn ghost" id="expJson">⬇ Export Data</button>
           <label class="btn ghost" style="display:inline-flex;align-items:center;cursor:pointer">⬆ Import Data<input type="file" id="impJson" accept="application/json" hidden></label>
+          <button class="btn ghost" id="restoreBak">↩ Pulihkan Riwayat</button>
           <button class="btn danger" id="resetBtn">Reset Semua</button>
         </div>
       </div>
@@ -521,15 +522,25 @@ const INC_CATS=[["Allowance LPDP","#0FA968"],["Gaji / Part-time","#2B7FFF"],["Ha
 const DEFAULTS={
   allowance:1700, rates:{IDR:24200,USD:1.34}, cur:'GBP', area:'Kensal Green, London NW10',
   cats:DEF_CATS.map(c=>({name:c[0],color:c[1]})), incCats:INC_CATS.map(c=>({name:c[0],color:c[1]})),
-  accounts:['Mandiri','Cash','UK Bank'], tx:[],
+  accounts:['Mandiri','Cash','UK Bank'], tx:[], deleted:[],
   ai:{key:'',model:'claude-haiku-4-5'}, gClientId:'', driveFolder:'', sheetId:'', updatedAt:0
 };
 const SKEY='daffa-fos-v5';
 let state, activeMonth=START_MONTH, fType='expense', fInCur='GBP', fReceipt=null, accessToken='', syncTimer=null;
 function loadState(){try{const r=localStorage.getItem(SKEY);if(r)return Object.assign(JSON.parse(JSON.stringify(DEFAULTS)),JSON.parse(r));}catch(e){}return JSON.parse(JSON.stringify(DEFAULTS));}
-function saveState(local){state.updatedAt=Date.now();try{localStorage.setItem(SKEY,JSON.stringify(state));}catch(e){toast('⚠ Penyimpanan penuh — hubungkan Google');}
-  if(!local && accessToken){clearTimeout(syncTimer);syncTimer=setTimeout(gsSave,1600);}}
+function saveState(local){state.updatedAt=Date.now();try{localStorage.setItem(SKEY,JSON.stringify(state));
+    if(state.tx&&state.tx.length)localStorage.setItem(SKEY+'-bak',JSON.stringify({t:Date.now(),tx:state.tx,deleted:state.deleted||[]}));}catch(e){toast('⚠ Penyimpanan penuh — hubungkan Google');}
+  if(!local && tokenClient){clearTimeout(syncTimer);syncTimer=setTimeout(gsSave,1600);}}
 state=loadState();
+// SAFETY NET: jika riwayat kosong tapi ada cadangan lokal, pulihkan otomatis (hormati daftar hapus)
+(function restoreIfEmpty(){try{
+  if(!state.tx||!state.tx.length){
+    const b=localStorage.getItem(SKEY+'-bak');
+    if(b){const p=JSON.parse(b);const del=new Set(state.deleted||p.deleted||[]);
+      const back=(p.tx||[]).filter(t=>!del.has(t.id));
+      if(back.length){state.tx=back;state.deleted=Array.from(del);window._restored=back.length;
+        localStorage.setItem(SKEY,JSON.stringify(state));}}}
+}catch(e){}})();
 
 /* ================= HELPERS ================= */
 const $=id=>document.getElementById(id);
@@ -647,7 +658,7 @@ function renderList(){
           '<button class="del" data-id="'+t.id+'"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg></button></div>';
       }).join('')+'</div>';
   }).join('');
-  L.querySelectorAll('.del').forEach(b=>b.addEventListener('click',()=>{state.tx=state.tx.filter(t=>t.id!==+b.dataset.id);saveState();refreshAll();toast('Dihapus');}));
+  L.querySelectorAll('.del').forEach(b=>b.addEventListener('click',()=>{const id=+b.dataset.id;state.deleted=(state.deleted||[]).concat([id]);state.tx=state.tx.filter(t=>t.id!==id);saveState();refreshAll();toast('Dihapus');}));
   L.querySelectorAll('.thumb').forEach(im=>im.addEventListener('click',()=>{const t=state.tx.find(x=>x.id===+im.dataset.img);if(t&&t.rec){$('mImg').src=t.rec.img;$('modal').classList.add('show');}}));
 }
 $('mClose').addEventListener('click',()=>$('modal').classList.remove('show'));
@@ -839,16 +850,64 @@ $('aiTest').addEventListener('click',()=>{state.ai.key=$('aiKey').value.trim();s
 
 /* ================= GOOGLE (SHEETS + DRIVE) ================= */
 function setSync(on,msg){const d=$('syncDot');d.classList.toggle('on',on);$('syncTxt').textContent=msg;}
+let tokenClient=null, tokenExpiry=0, gapiReadyTries=0, silentAttempt=false;
+function buildTokenClient(cid){
+  tokenClient=google.accounts.oauth2.initTokenClient({client_id:cid,
+    scope:'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/spreadsheets',
+    callback:async r=>{
+      if(r&&r.access_token){silentAttempt=false;
+        accessToken=r.access_token;tokenExpiry=Date.now()+(r.expires_in?r.expires_in*1000:3600000)-120000;
+        try{localStorage.setItem('daffa-fos-granted','1');}catch(e){}
+        setSync(true,'Google terhubung ✓');
+        try{await ensureAll();await gsLoad();scheduleRefresh();}catch(e){setSync(false,'⚠ '+e.message);}
+      }else{
+        if(silentAttempt){silentAttempt=false;setSync(false,'Klik "Hubungkan Google" untuk sinkron');}
+        else setSync(false,'Gagal mendapat izin — coba lagi');
+      }
+    },
+    error_callback:err=>{
+      if(silentAttempt){silentAttempt=false;setSync(false,'Klik "Hubungkan Google" untuk sinkron');}
+      else{setSync(false,'Login dibatalkan');}
+    }});
+}
+function scheduleRefresh(){
+  clearTimeout(scheduleRefresh._t);
+  const ms=Math.max(tokenExpiry-Date.now(),60000);
+  scheduleRefresh._t=setTimeout(()=>{if(tokenClient)tokenClient.requestAccessToken({prompt:''});},ms);
+}
+function ensureToken(){
+  return new Promise((res,rej)=>{
+    if(accessToken&&Date.now()<tokenExpiry)return res();
+    if(!tokenClient)return rej(new Error('Belum terhubung'));
+    const prev=tokenClient.callback;
+    tokenClient.callback=async r=>{tokenClient.callback=prev;
+      if(r&&r.access_token){accessToken=r.access_token;tokenExpiry=Date.now()+(r.expires_in?r.expires_in*1000:3600000)-120000;res();}
+      else rej(new Error('Perlu login ulang'));};
+    tokenClient.requestAccessToken({prompt:''});
+  });
+}
 function driveConnect(){
   const cid=($('gClientId').value||state.gClientId).trim();
   if(!cid){toast('Isi Client ID dulu (lihat panduan)');go('set');return;}
   if(typeof google==='undefined'||!google.accounts){toast('Layanan Google belum termuat — cek internet');return;}
   state.gClientId=cid;saveState(true);
-  const tc=google.accounts.oauth2.initTokenClient({client_id:cid,
-    scope:'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/spreadsheets',
-    callback:async r=>{if(r.access_token){accessToken=r.access_token;setSync(true,'Google terhubung ✓');toast('✓ Terhubung');
-      try{await ensureAll();await gsLoad();}catch(e){toast('⚠ '+e.message);}}else toast('Gagal mendapat izin');}});
-  tc.requestAccessToken();
+  if(!tokenClient)buildTokenClient(cid);
+  setSync(false,'Menghubungkan…');
+  silentAttempt=false;
+  tokenClient.requestAccessToken({prompt:'consent'});
+}
+function autoConnect(){
+  if(!state.gClientId)return;
+  let granted=false;try{granted=localStorage.getItem('daffa-fos-granted')==='1';}catch(e){}
+  if(!granted)return;
+  const start=()=>{
+    if(typeof google==='undefined'||!google.accounts){if(gapiReadyTries++<20)return setTimeout(start,400);return;}
+    if(!tokenClient)buildTokenClient(state.gClientId);
+    setSync(false,'Menyambungkan ke Google…');
+    silentAttempt=true;
+    tokenClient.requestAccessToken({prompt:''});
+  };
+  start();
 }
 async function gFetch(url,opt){opt=opt||{};opt.headers=Object.assign({'Authorization':'Bearer '+accessToken},opt.headers||{});
   const r=await fetch(url,opt);if(r.status===401){accessToken='';setSync(false,'Sesi habis — hubungkan lagi');throw new Error('Sesi Google habis');}return r;}
@@ -880,29 +939,55 @@ function txRows(){
   return [head].concat(rows);
 }
 async function gsSave(){
-  if(!accessToken||!state.sheetId)return;
+  if(!state.sheetId||!tokenClient)return;
   try{
+    await ensureToken();
     setSync(true,'Menyimpan…');
     const slim=Object.assign({},state);slim.tx=state.tx.map(t=>Object.assign({},t,{rec:t.rec?{n:t.rec.n,img:t.rec.img}:null}));
     await gFetch('https://sheets.googleapis.com/v4/spreadsheets/'+state.sheetId+'/values/_data!A1?valueInputOption=RAW',
       {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({values:[[JSON.stringify(slim)]]})});
-    await gFetch('https://sheets.googleapis.com/v4/spreadsheets/'+state.sheetId+'/values/Transaksi!A1:Z10000:clear',{method:'POST'});
+    await gFetch('https://sheets.googleapis.com/v4/spreadsheets/'+state.sheetId+'/values/Transaksi!A1:Z100000:clear',{method:'POST'});
     await gFetch('https://sheets.googleapis.com/v4/spreadsheets/'+state.sheetId+'/values/Transaksi!A1?valueInputOption=RAW',
       {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({values:txRows()})});
     setSync(true,'Tersinkron '+new Date().toLocaleTimeString('id-ID',{hour:'2-digit',minute:'2-digit'}));
   }catch(e){setSync(false,'Gagal sinkron — coba lagi');}
 }
+// merge remote+local transactions by id (union). Deletions are handled via a tombstone list.
+function mergeTx(localTx,remoteTx,delIds){
+  const map={},del=new Set(delIds||[]);
+  (remoteTx||[]).forEach(t=>{if(!del.has(t.id))map[t.id]=t;});
+  (localTx||[]).forEach(t=>{if(!del.has(t.id))map[t.id]=Object.assign({},map[t.id]||{},t);});
+  return Object.values(map).sort((a,b)=>a.d.localeCompare(b.d)||a.id-b.id);
+}
 async function gsLoad(){
+  if(!tokenClient||!state.sheetId)return;
   try{
+    await ensureToken();
     const r=await gFetch('https://sheets.googleapis.com/v4/spreadsheets/'+state.sheetId+'/values/_data!A1');
     const j=await r.json();
     const raw=j.values&&j.values[0]&&j.values[0][0];
-    if(raw){const remote=JSON.parse(raw);
-      if(remote.updatedAt&&remote.updatedAt>state.updatedAt){
-        const cid=state.gClientId;state=Object.assign(JSON.parse(JSON.stringify(DEFAULTS)),remote);state.gClientId=cid;
-        localStorage.setItem(SKEY,JSON.stringify(state));toast('⬇ Data terbaru diambil dari Google');initInputs();refreshAll();return;}}
+    if(!raw){await gsSave();return;} // empty cloud -> push local up, never wipe local
+    let remote;try{remote=JSON.parse(raw);}catch(e){await gsSave();return;}
+    // SAFETY: build a union so nothing is lost regardless of which side is newer
+    const cid=state.gClientId;
+    const localTx=state.tx.slice();
+    const tomb=Array.from(new Set((state.deleted||[]).concat(remote.deleted||[])));
+    const merged=mergeTx(localTx,remote.tx,tomb);
+    // choose scalar settings from whichever record was updated more recently
+    const remoteNewer=(remote.updatedAt||0)>(state.updatedAt||0);
+    const base=remoteNewer?remote:state;
+    const next=Object.assign(JSON.parse(JSON.stringify(DEFAULTS)),base);
+    next.tx=merged; next.deleted=tomb; next.gClientId=cid;
+    // preserve local receipts (images) if remote copy lost them
+    const byId={};localTx.forEach(t=>{if(t.rec&&t.rec.img)byId[t.id]=t.rec;});
+    next.tx.forEach(t=>{if((!t.rec||!t.rec.img)&&byId[t.id])t.rec=byId[t.id];});
+    const changed = JSON.stringify(next.tx)!==JSON.stringify(localTx) || remoteNewer;
+    state=next;
+    localStorage.setItem(SKEY,JSON.stringify(state));
+    if(changed){initInputs();refreshAll();toast('✓ Data tersinkron ('+state.tx.length+' transaksi)');}
+    // push the merged result back so both sides converge
     await gsSave();
-  }catch(e){await gsSave();}
+  }catch(e){/* on any error, DO NOT touch local data */ setSync(false,'Gagal menarik — data lokal aman');}
 }
 function dataURLtoBlob(u){const a=u.split(','),m=a[0].match(/:(.*?);/)[1],b=atob(a[1]);let n=b.length;const arr=new Uint8Array(n);while(n--)arr[n]=b.charCodeAt(n);return new Blob([arr],{type:m});}
 async function driveUploadReceipt(t){
@@ -913,7 +998,9 @@ async function driveUploadReceipt(t){
   }catch(e){}
 }
 $('gConnect').addEventListener('click',driveConnect);
-$('gSyncNow').addEventListener('click',()=>{if(!accessToken)driveConnect();else gsLoad();});
+$('gSyncNow').addEventListener('click',async()=>{if(!tokenClient){driveConnect();return;}try{await ensureToken();await gsLoad();toast('✓ Disinkron');}catch(e){driveConnect();}});
+// pull latest when app regains focus (switching between phone & laptop)
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&tokenClient&&accessToken&&Date.now()<tokenExpiry){gsLoad();}});
 
 /* ================= SETTINGS ================= */
 function renderSet(){
@@ -932,7 +1019,16 @@ $('setArea').addEventListener('input',e=>{state.area=e.target.value;saveState();
 $('expJson').addEventListener('click',()=>{const a=document.createElement('a');a.href='data:application/json;charset=utf-8,'+encodeURIComponent(JSON.stringify(state,null,1));a.download='financialos-backup.json';a.click();});
 $('impJson').addEventListener('change',e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();
   r.onload=ev=>{try{const s=JSON.parse(ev.target.result);state=Object.assign(JSON.parse(JSON.stringify(DEFAULTS)),s);saveState();initInputs();refreshAll();toast('✓ Data diimpor');}catch(err){toast('File tidak valid');}};r.readAsText(f);});
-$('resetBtn').addEventListener('click',()=>{if(confirm('Hapus SEMUA data lokal (transaksi, kunci, pengaturan)?')){localStorage.removeItem(SKEY);location.reload();}});
+$('restoreBak').addEventListener('click',()=>{try{
+  const b=localStorage.getItem(SKEY+'-bak');
+  if(!b){toast('Tidak ada cadangan lokal di perangkat ini');return;}
+  const p=JSON.parse(b);
+  const merged=mergeTx(state.tx,p.tx,state.deleted||[]);
+  const added=merged.length-state.tx.length;
+  state.tx=merged;saveState();refreshAll();
+  toast(added>0?('↩ '+added+' transaksi dipulihkan'):'Semua transaksi dari cadangan sudah ada');
+}catch(e){toast('Cadangan tidak valid');}});
+$('resetBtn').addEventListener('click',()=>{if(confirm('Hapus SEMUA data lokal (transaksi, kunci, pengaturan)?')){localStorage.removeItem(SKEY);localStorage.removeItem(SKEY+'-bak');localStorage.removeItem('daffa-fos-granted');location.reload();}});
 
 /* ================= NAV & INIT ================= */
 const titles={
@@ -980,7 +1076,9 @@ function refreshAll(){renderDash();renderList();renderSet();
 }
 bindNum('rateIDR',v=>state.rates.IDR=v);bindNum('rateUSD',v=>state.rates.USD=v);bindNum('setAllow',v=>state.allowance=v);
 initInputs();refreshAll();buildCharts();
+if(window._restored)toast('↩ '+window._restored+' transaksi dipulihkan dari cadangan lokal');
 if(state.gClientId)setSync(false,'Klik "Hubungkan Google" untuk sinkron');
+autoConnect(); // reconnect silently if previously authorized
 if('serviceWorker' in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}));}
 </script>
 </body>
